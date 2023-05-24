@@ -12,7 +12,7 @@ nltk.download('stopwords')
 nltk.download('wordnet')
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
-from utilities import is_visited
+
 
 def get_root_domain(url):
     parsed_url = urlparse(url)

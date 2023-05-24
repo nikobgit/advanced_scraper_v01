@@ -10,15 +10,6 @@ nltk.download('wordnet')
 
 logging.basicConfig(level=logging.INFO)
 
-def is_visited(url, visited_urls_data, scraper_type, max_attempts=2):
-    for visited_url, scraped, attempts in visited_urls_data:
-        if url == visited_url and (
-                (scraper_type == "scrapy" and attempts >= max_attempts - 1)
-                or (scraper_type == "playwright" and (scraped or attempts >= max_attempts))
-        ):
-            return True
-    return False
-
 def clean_text(text):
     logging.info("Cleaning text...")  # Add logging
     text = text.lower()

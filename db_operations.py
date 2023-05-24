@@ -3,9 +3,48 @@ from psycopg2 import sql
 import pandas as pd
 import logging
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+import re
 
 logging.basicConfig(level=logging.WARNING)
 
+def extract_root_domain(url):
+    from urllib.parse import urlparse
+    parsed_url = urlparse(url)
+    if parsed_url.hostname is not None:
+        url_domain_parts = parsed_url.hostname.split('.')
+        url_root_domain = '.'.join(url_domain_parts[-2:])
+        # Replace periods with underscores and convert to lowercase for PostgreSQL table names
+        sanitized_root_domain = url_root_domain.replace('.', '_').lower()
+        return sanitized_root_domain
+    else:
+        return None
+
+def sanitize_string(string):
+    return re.sub(r'\W|^(?=\d)', '_', string)
+
+def get_scraped_urls_from_database(table_name, dbname, user, password, host, port):
+    table_name = sanitize_string(table_name)
+    conn = psycopg2.connect(
+        dbname=dbname,
+        user=user,
+        password=password,
+        host=host,
+        port=port,
+    )
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT to_regclass('public.{table_name}');")
+    table_exists = cursor.fetchone()[0]
+    if table_exists:
+        query = f"SELECT url FROM {table_name};"
+        cursor.execute(query)
+        urls = [row[0] for row in cursor.fetchall()]
+    else:
+        # Create the table if it doesn't exist
+        create_table_if_not_exists(conn, table_name, pd.DataFrame(columns=['url', 'content', 'tables', 'code_snippets', 'domain']))
+        urls = []
+    cursor.close()
+    conn.close()
+    return urls
 
 def create_database_if_not_exists(database, user, password, host, port):
     conn = psycopg2.connect(
@@ -17,56 +56,40 @@ def create_database_if_not_exists(database, user, password, host, port):
     )
     conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     cursor = conn.cursor()
-
     cursor.execute(f"SELECT 1 FROM pg_database WHERE datname='{database}';")
     exists = cursor.fetchone()
     if not exists:
         cursor.execute(f"CREATE DATABASE {database};")
-
     cursor.close()
     conn.close()
 
-
-def create_visited_urls_table_if_not_exists(conn):
+def create_table_if_not_exists(conn, table_name, df):
+    table_name = sanitize_string(table_name)
     cursor = conn.cursor()
-
-    cursor.execute("SELECT to_regclass('public.visited_urls');")
+    cursor.execute(f"SELECT to_regclass('public.{table_name}');")
     table_exists = cursor.fetchone()[0]
-
     if not table_exists:
-        create_table_sql = """
-            CREATE TABLE visited_urls (
+        schema = df.dtypes.map(lambda x: x.name).to_dict()
+        schema_sql = ", ".join([f"{col} {dtype.upper()}" for col, dtype in schema.items()])
+        schema_sql = schema_sql.replace("OBJECT", "TEXT")
+        create_table_sql = f"""
+            CREATE TABLE {table_name} (
                 id SERIAL PRIMARY KEY,
+                domain TEXT,
                 url TEXT UNIQUE,
-                scraped BOOLEAN DEFAULT FALSE,
-                attempts INTEGER DEFAULT 0
+                content TEXT,
+                dynamic_content TEXT,
+                tables TEXT,
+                code_snippets TEXT
             );
         """
         cursor.execute(create_table_sql)
         conn.commit()
-
     cursor.close()
-
-
-
-def save_visited_url_to_postgres(url, conn):
-    cursor = conn.cursor()
-
-    query = """
-        INSERT INTO visited_urls (url)
-        VALUES (%s)
-        ON CONFLICT (url) DO UPDATE SET
-          attempts = visited_urls.attempts + 1;
-    """
-    cursor.execute(query, (url,))
-    conn.commit()
-
-    cursor.close()
-
 
 def save_to_postgres(df, table_name, database, user, password, host, port, query=None, recreate_table=False):
+    table_name = sanitize_string(table_name)
     create_database_if_not_exists(database, user, password, host, port)
-
     conn = psycopg2.connect(
         dbname=database,
         user=user,
@@ -74,12 +97,20 @@ def save_to_postgres(df, table_name, database, user, password, host, port, query
         host=host,
         port=port,
     )
+    if query is None:
+        query = sql.SQL("""
+                INSERT INTO {0} (domain, url, content, tables, code_snippets)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (url) DO UPDATE SET
+                content = EXCLUDED.content,
+                tables = EXCLUDED.tables,
+                code_snippets = EXCLUDED.code_snippets;
+            """).format(sql.Identifier(table_name))
 
     if recreate_table:
         drop_table_if_exists(conn, table_name)
 
     create_table_if_not_exists(conn, table_name, df)
-    create_visited_urls_table_if_not_exists(conn)
 
     cursor = conn.cursor()
 
@@ -96,12 +127,13 @@ def save_to_postgres(df, table_name, database, user, password, host, port, query
         cursor.execute(query, (
             row['domain'], row['url'], row['content'], "", row['tables'], row['code_snippets']))
         conn.commit()
-        save_visited_url_to_postgres(row['url'], conn)
 
     cursor.close()
     conn.close()
 
+
 def drop_table_if_exists(conn, table_name):
+    table_name = extract_root_domain(table_name)
     cursor = conn.cursor()
 
     cursor.execute(f"SELECT to_regclass('public.{table_name}');")
@@ -110,34 +142,6 @@ def drop_table_if_exists(conn, table_name):
     if table_exists:
         drop_table_sql = f"DROP TABLE {table_name};"
         cursor.execute(drop_table_sql)
-        conn.commit()
-
-    cursor.close()
-
-def create_table_if_not_exists(conn, table_name, df):
-    cursor = conn.cursor()
-
-    cursor.execute(f"SELECT to_regclass('public.{table_name}');")
-    table_exists = cursor.fetchone()[0]
-
-    if not table_exists:
-        schema = df.dtypes.map(lambda x: x.name).to_dict()
-        schema_sql = ", ".join([f"{col} {dtype.upper()}" for col, dtype in schema.items()])
-        schema_sql = schema_sql.replace("OBJECT", "TEXT")  # Change JSONB to TEXT
-
-        # Update the table schema
-        create_table_sql = f"""
-            CREATE TABLE {table_name} (
-                id SERIAL PRIMARY KEY,
-                domain TEXT,
-                url TEXT UNIQUE,
-                content TEXT,
-                dynamic_content TEXT,
-                tables TEXT,
-                code_snippets TEXT
-            );
-        """
-        cursor.execute(create_table_sql)
         conn.commit()
 
     cursor.close()
