@@ -1,25 +1,10 @@
-import re
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
-import nltk
 import logging
 import random
 
-nltk.download('stopwords')
-nltk.download('wordnet')
+
 
 logging.basicConfig(level=logging.INFO)
 
-def clean_text(text):
-    logging.info("Cleaning text...")  # Add logging
-    text = text.lower()
-    lemmatizer = WordNetLemmatizer()
-    stop_words = set(stopwords.words('english'))
-    words = re.findall(r'\w+', text)
-    words = [lemmatizer.lemmatize(word) for word in words if word not in stop_words]
-    text = ' '.join(words)
-    logging.info("Text cleaning completed.")  # Add logging
-    return text
 
 def random_user_agent():
     user_agents = [
@@ -33,9 +18,34 @@ def random_user_agent():
     ]
     return random.choice(user_agents)
 
+
 ignored_extensions = [
     '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.mp4', '.mov', '.avi', '.mkv', '.wmv',
     '.flv', '.mpg', '.mpeg', '.m4v', '.mp3', '.wav', '.ogg', '.m4a', '.zip', '.rar',
     '.7z', '.tar', '.gz', '.bz2', '.xlsx', '.xls', '.csv', '.json', '.xml', '.doc', '.docx',
     '.ppt', '.pptx', '.txt', '.log', '.iso', 'demo', '.pdf', '.svg', '.ico', '.ttf', '.woff', '.woff2'
+]
+
+BLOCK_RESOURCE_TYPES = [
+    'beacon',
+    'csp_report',
+    'font',
+    'image',
+    'imageset',
+    'media',
+    'object',
+    'texttrack',
+]
+
+BLOCK_RESOURCE_NAMES = [
+    'adzerk',
+    'analytics',
+    'cdn.api.twitter',
+    'doubleclick',
+    'exelator',
+    'facebook',
+    'fontawesome',
+    'google',
+    'google-analytics',
+    'googletagmanager',
 ]

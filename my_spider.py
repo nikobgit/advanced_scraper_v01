@@ -1,15 +1,10 @@
 import scrapy
 from scraper import scrape_page, is_same_domain
-from db_operations import save_to_postgres
+from db_operations import save_to_postgres, update_database_with_visited_urls
 import pandas as pd
 import json
-from langdetect import detect
-from utilities import clean_text
 from urllib.parse import urlparse
-from urllib.parse import urlsplit
-from utilities import random_user_agent, ignored_extensions
-from dynamic_scraper import update_database_with_visited_urls
-
+from utilities import random_user_agent
 
 
 class MySpider(scrapy.Spider):
@@ -45,7 +40,7 @@ class MySpider(scrapy.Spider):
         if not self.should_ignore_url(response.url) and response.url not in self.previously_scraped_urls:
             if self.max_urls_to_scrape <= 0 or self.scraped_items_count < self.max_urls_to_scrape:
                 self.scraped_data[response.url] = {
-                    'content': clean_text(content),
+                    'content': content,
                     'code_snippets': code_snippets,
                     'tables': tables,
                 }

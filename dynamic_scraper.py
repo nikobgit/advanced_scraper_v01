@@ -1,47 +1,10 @@
-import asyncio
-from db_operations import save_to_postgres
 import pandas as pd
 from bs4 import BeautifulSoup
-import psycopg2
-import json
-from utilities import ignored_extensions
+from utilities import ignored_extensions, BLOCK_RESOURCE_TYPES, BLOCK_RESOURCE_NAMES
 import logging
 logging.basicConfig(level=logging.INFO)
-from playwright.async_api import async_playwright, TimeoutError
-import db_operations
-
-def playwright_logger(name: str, severity: str, message: str, args: list, hints: dict):
-    logger = logging.getLogger(name)
-    log_method = getattr(logger, severity.lower())
-    log_method(message.format(*args))
-
-logging.getLogger("playwright").setLevel(logging.DEBUG)
-logging.getLogger("playwright").addHandler(logging.StreamHandler())
-
-
-BLOCK_RESOURCE_TYPES = [
-    'beacon',
-    'csp_report',
-    'font',
-    'image',
-    'imageset',
-    'media',
-    'object',
-    'texttrack',
-]
-
-BLOCK_RESOURCE_NAMES = [
-    'adzerk',
-    'analytics',
-    'cdn.api.twitter',
-    'doubleclick',
-    'exelator',
-    'facebook',
-    'fontawesome',
-    'google',
-    'google-analytics',
-    'googletagmanager',
-]
+from playwright.async_api import async_playwright
+from scraper import extract_tables as extract_tables_soup, extract_code_snippets as extract_code_snippets_soup
 
 
 async def intercept_route(route, request):
@@ -54,27 +17,64 @@ async def intercept_route(route, request):
     else:
         await route.continue_()
 
+def extract_code_snippets(content):
+    soup = BeautifulSoup(content, 'html.parser')
+    return extract_code_snippets_soup(soup)
 
 def extract_tables(content):
     soup = BeautifulSoup(content, 'html.parser')
-    tables = []
-    for table in soup.find_all("table"):
-        table_data = []
-        for row in table.find_all("tr"):
-            row_data = [cell.text for cell in row.find_all(["th", "td"])]
-            table_data.append(row_data)
-        tables.append(table_data)
-    return tables
+    return extract_tables_soup(soup)
 
+async def dynamic_content_click_modal(page, url):
+    dynamic_content_click = ""
+    code_snippets_click = []
 
-def extract_code_snippets(content):
-    soup = BeautifulSoup(content, 'html.parser')
-    code_snippets = [code.text for code in soup.find_all("code")]
-    return code_snippets
+    try:
+        print(f"Going to URL: {url}")
+        await page.goto(url, wait_until="domcontentloaded", timeout=10000)
+        await page.wait_for_function("document.readyState === 'complete'", timeout=10000)
+        print("Page fully loaded.")
+
+        print("Looking for buttons...")
+        buttons = page.locator('.icon-item')
+        button_count = await buttons.count()
+        print(f"Found {button_count} button(s).")
+
+        for i in range(button_count):
+            print(f"Clicking button #{i+1}...")
+            button = buttons.nth(i)
+            await button.click()
+            print("Button clicked.")
+
+            print("Waiting for modal to appear...")
+            modal_locator = page.locator('.modal-dialog')
+            await modal_locator.wait_for()
+            print("Modal appeared.")
+
+            print("Getting modal text...")
+            modal_text = await modal_locator.inner_text()
+            dynamic_content_click += modal_text
+            print(f"Modal text (first 100 chars): {modal_text[:100]}")
+
+            print("Looking for code snippet in modal...")
+            code_snippet_element = modal_locator.locator('pre')
+            code_snippet = await code_snippet_element.inner_text()
+            code_snippets_click.append(code_snippet)
+            print(f"Code snippet found: {code_snippet[:100]}")
+
+            print("Closing modal...")
+            await page.keyboard.press('Escape')
+            print("Modal closed.")
+
+    except Exception as e:
+        logging.error(f"Exception while extracting dynamic click content for {url}: {e}")
+
+    return dynamic_content_click, code_snippets_click
+
 
 
 async def extract_data(page):
-    dynamic_content_elements = await page.query_selector_all("p, blockquote")
+    dynamic_content_elements = await page.locator("p, blockquote").all()
     dynamic_content = " ".join([await element.inner_text() for element in dynamic_content_elements])
     logging.info(f"Dynamic content excerpt: {dynamic_content[:100]}...")
 
@@ -86,7 +86,6 @@ async def extract_data(page):
 
     return dynamic_content, tables, code_snippets
 
-
 async def scroll_and_extract(page):
     logging.info("Scrolling to bottom of page to load dynamic content...")
     await page.mouse.wheel(0, page.viewport_size['height'])
@@ -94,55 +93,6 @@ async def scroll_and_extract(page):
 
     logging.info("Extracting dynamic content, tables, and code snippets...")
     return await extract_data(page)
-
-
-async def interact_with_elements(page):
-    timeout_value = 3000
-    dynamic_content_click, tables_click, code_snippets_click = "", [], []
-
-    try:
-        await page.waitForSelector(".icon-item", timeout=timeout_value)
-    except TimeoutError:
-        logging.warning("Timed out while waiting for expandable elements or modals. Skipping interaction with elements.")
-        return dynamic_content_click, tables_click, code_snippets_click
-
-    except Exception as e:
-        logging.warning(f"Exception while interacting with elements: {e}")
-
-    try:
-        icon_items = await page.query_selector_all(".icon-item")
-
-        for icon_item in icon_items:
-            await icon_item.click()
-            await page.waitForSelector("div.modal-dialog-container", timeout=timeout_value)
-
-            # Extract content from opened modal
-            prompt_elem = await page.query_selector("div.prompt")
-            prompt_text = await prompt_elem.inner_text() if prompt_elem else ""
-
-            details_header_elem = await page.query_selector("#example-modal > div.modal-dialog-container > div > div.details-header")
-            details_header_text = await details_header_elem.inner_text() if details_header_elem else ""
-
-            details_description_elem = await page.query_selector("#example-modal > div.modal-dialog-container > div > div.details-description")
-            details_description_text = await details_description_elem.inner_text() if details_description_elem else ""
-
-            dynamic_content_click += f"{prompt_text} {details_header_text} {details_description_text} "
-
-            # Extract code snippets
-            code_sample_elem = await page.query_selector("#example-modal > div.modal-dialog-container > div > div.example-details-content > div.left-panel > div.api-request > div.code-sample > div.code-sample-header > div.code-sample-copy")
-            if code_sample_elem:
-                await code_sample_elem.click()
-                code_sample_text = await page.evaluate("() => window.getSelection().toString()")
-                code_snippets_click.append(code_sample_text)
-
-            await page.keyboard.press("Escape")
-            await page.waitForSelector("body", timeout=timeout_value)
-
-    except Exception as e:
-        logging.warning(f"Exception while interacting with elements: {e}")
-
-    return dynamic_content_click, tables_click, code_snippets_click
-
 
 async def extract_dynamic_content(url):
     try:
@@ -157,7 +107,6 @@ async def extract_dynamic_content(url):
             )
 
             page = await context.new_page()
-
             await page.route("**/*", intercept_route)
 
             try:
@@ -165,49 +114,42 @@ async def extract_dynamic_content(url):
                 await page.goto(url, wait_until="domcontentloaded", timeout=10000)
                 await page.wait_for_function("document.readyState === 'complete'", timeout=10000)
 
-                dynamic_content_scroll, tables_scroll, code_snippets_scroll = await scroll_and_extract(page)
+                dynamic_content, tables, code_snippets = await scroll_and_extract(page)
+                dynamic_content_click, code_snippets_click = await dynamic_content_click_modal(page, url)
 
-                try:
-                    dynamic_content_click, tables_click, code_snippets_click = await interact_with_elements(page)
-                except Exception as e:
-                    logging.warning(f"Exception while interacting with elements on {url}: {e}")
-                    dynamic_content_click, tables_click, code_snippets_click = "", [], []
+                # Extend code snippets with the snippets obtained from modal
+                code_snippets.extend(code_snippets_click)
 
             except Exception as e:
                 logging.error(f"Exception while loading {url}: {e}")
-                dynamic_content_scroll, tables_scroll, code_snippets_scroll = "", [], []
-                dynamic_content_click, tables_click, code_snippets_click = "", [], []
+                dynamic_content, tables, code_snippets = "", [], []
+                dynamic_content_click, code_snippets_click = "", []
 
             await page.close()
             await context.close()
             await browser.close()
 
-            return (dynamic_content_scroll, tables_scroll, code_snippets_scroll,
-                    dynamic_content_click, tables_click, code_snippets_click)
+            return dynamic_content, tables, code_snippets, dynamic_content_click, code_snippets_click
+
     except Exception as e:
         logging.error(f"Exception while extracting data for {url}: {e}")
-        return "", [], [], "", [], []
-
+        return "", [], [], "", []
 
 async def scrape_dynamic_content(urls):
     dynamic_data = []
 
     for url in urls:
-        # Check if URL has any ignored extensions
         if any(url.lower().endswith(ext) for ext in ignored_extensions):
-            continue  # If the URL has an ignored extension, skip it
+            continue
 
         try:
-            (dynamic_content_scroll, tables_scroll, code_snippets_scroll,
-             dynamic_content_click, tables_click, code_snippets_click) = await extract_dynamic_content(url)
+            dynamic_content, tables, code_snippets, dynamic_content_click, code_snippets_click = await extract_dynamic_content(url)
             dynamic_data.append({
                 'url': url,
-                'dynamic_content_scroll': dynamic_content_scroll,
-                'tables_scroll': tables_scroll,
-                'code_snippets_scroll': code_snippets_scroll,
-                'dynamic_content_click': dynamic_content_click,
-                'tables_click': tables_click,
-                'code_snippets_click': code_snippets_click,
+                'dynamic_content': dynamic_content,
+                'dynamic_click': dynamic_content_click,
+                'tables': tables,
+                'code_snippets': code_snippets,
             })
         except Exception as e:
             logging.error(f"Exception while extracting data for {url}: {e}")
@@ -215,59 +157,3 @@ async def scrape_dynamic_content(urls):
 
     df = pd.DataFrame(dynamic_data)
     return df
-
-def update_database_with_visited_urls(visited_urls, table_name, database_config):
-    dbname, user, password, host, port = database_config
-    conn = psycopg2.connect(
-        dbname=dbname,
-        user=user,
-        password=password,
-        host=host,
-        port=port,
-    )
-
-    cursor = conn.cursor()
-
-    for url in visited_urls:
-        query = f"""
-            INSERT INTO {table_name} (url)
-            VALUES (%s)
-            ON CONFLICT (url) DO NOTHING;
-        """
-        cursor.execute(query, (url,))
-        conn.commit()
-
-    cursor.close()
-    conn.close()
-
-def update_database_with_dynamic_content(df, table_name, database_config):
-    dbname, user, password, host, port = database_config
-    conn = psycopg2.connect(
-        dbname=dbname,
-        user=user,
-        password=password,
-        host=host,
-        port=port,
-    )
-
-    cursor = conn.cursor()
-
-    for _, row in df.iterrows():
-        # Concatenate dynamic content from scroll and click/expand/modals
-        combined_dynamic_content = row['dynamic_content_scroll'] + " " + row['dynamic_content_click']
-        combined_tables = row['tables_scroll'] + row['tables_click']
-        combined_code_snippets = row['code_snippets_scroll'] + row['code_snippets_click']
-
-        query = f"""
-            UPDATE {table_name}
-            SET dynamic_content = %s,
-                tables = %s::jsonb,
-                code_snippets = %s::jsonb
-            WHERE url = %s;
-        """
-        cursor.execute(query, (
-            combined_dynamic_content, json.dumps(combined_tables), json.dumps(combined_code_snippets), row['url']))
-        conn.commit()
-
-    cursor.close()
-    conn.close()

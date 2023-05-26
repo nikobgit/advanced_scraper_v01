@@ -1,18 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
-import re
 from urllib.parse import urljoin, urlparse
-import time
-import random
-import json
-import nltk
 from utilities import random_user_agent
-# Download necessary NLTK resources
-nltk.download('stopwords')
-nltk.download('wordnet')
-from nltk.stem import WordNetLemmatizer
-from nltk.corpus import stopwords
-
 
 def get_root_domain(url):
     parsed_url = urlparse(url)
@@ -111,12 +100,3 @@ def is_same_domain(url, main_domain):
 
     # Check if root domains are the same or if the main domain is a subdomain of the url domain
     return main_root_domain == url_root_domain or main_domain.endswith(f".{url_root_domain}")
-
-def clean_text(text):
-    text = text.lower()
-    lemmatizer = WordNetLemmatizer()
-    stop_words = set(stopwords.words('english'))
-    words = re.findall(r'\w+', text)
-    words = [lemmatizer.lemmatize(word) for word in words if word not in stop_words]
-    text = ' '.join(words)
-    return text
