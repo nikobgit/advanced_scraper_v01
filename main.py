@@ -11,9 +11,12 @@ import asyncio
 from playwright.sync_api import sync_playwright
 from utilities import random_user_agent, ignored_extensions
 from db_operations import get_scraped_urls_from_database, extract_root_domain, sanitize_string
+import db_operations
+
 
 def main():
     pass
+
 
 main()
 
@@ -108,6 +111,6 @@ import dynamic_scraper
 async def main_async():
     successful_urls = get_scraped_urls_from_database(table_name, database_name, database_user, database_password, database_host, database_port)
     dynamic_df = await dynamic_scraper.scrape_dynamic_content(successful_urls)
-    dynamic_scraper.update_database_with_dynamic_content(dynamic_df, table_name, (database_name, database_user, database_password, database_host, database_port))
+    db_operations.update_database_with_dynamic_content(dynamic_df, table_name, (database_name, database_user, database_password, database_host, database_port))
 
 asyncio.run(main_async())

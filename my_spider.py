@@ -1,6 +1,6 @@
 import scrapy
 from scraper import scrape_page, is_same_domain
-from db_operations import save_to_postgres
+from db_operations import save_to_postgres, update_database_with_visited_urls
 import pandas as pd
 import json
 from langdetect import detect
@@ -8,8 +8,6 @@ from utilities import clean_text
 from urllib.parse import urlparse
 from urllib.parse import urlsplit
 from utilities import random_user_agent, ignored_extensions
-from dynamic_scraper import update_database_with_visited_urls
-
 
 
 class MySpider(scrapy.Spider):

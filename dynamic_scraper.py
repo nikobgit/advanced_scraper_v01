@@ -4,44 +4,22 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import psycopg2
 import json
-from utilities import ignored_extensions
+from utilities import ignored_extensions, BLOCK_RESOURCE_TYPES, BLOCK_RESOURCE_NAMES
 import logging
 logging.basicConfig(level=logging.INFO)
 from playwright.async_api import async_playwright, TimeoutError
 import db_operations
+from scraper import extract_tables as extract_tables_soup, extract_code_snippets as extract_code_snippets_soup
+
 
 def playwright_logger(name: str, severity: str, message: str, args: list, hints: dict):
     logger = logging.getLogger(name)
     log_method = getattr(logger, severity.lower())
     log_method(message.format(*args))
 
+
 logging.getLogger("playwright").setLevel(logging.DEBUG)
 logging.getLogger("playwright").addHandler(logging.StreamHandler())
-
-
-BLOCK_RESOURCE_TYPES = [
-    'beacon',
-    'csp_report',
-    'font',
-    'image',
-    'imageset',
-    'media',
-    'object',
-    'texttrack',
-]
-
-BLOCK_RESOURCE_NAMES = [
-    'adzerk',
-    'analytics',
-    'cdn.api.twitter',
-    'doubleclick',
-    'exelator',
-    'facebook',
-    'fontawesome',
-    'google',
-    'google-analytics',
-    'googletagmanager',
-]
 
 
 async def intercept_route(route, request):
@@ -55,22 +33,14 @@ async def intercept_route(route, request):
         await route.continue_()
 
 
-def extract_tables(content):
-    soup = BeautifulSoup(content, 'html.parser')
-    tables = []
-    for table in soup.find_all("table"):
-        table_data = []
-        for row in table.find_all("tr"):
-            row_data = [cell.text for cell in row.find_all(["th", "td"])]
-            table_data.append(row_data)
-        tables.append(table_data)
-    return tables
-
-
 def extract_code_snippets(content):
     soup = BeautifulSoup(content, 'html.parser')
-    code_snippets = [code.text for code in soup.find_all("code")]
-    return code_snippets
+    return extract_code_snippets_soup(soup)
+
+
+def extract_tables(content):
+    soup = BeautifulSoup(content, 'html.parser')
+    return extract_tables_soup(soup)
 
 
 async def extract_data(page):
@@ -216,58 +186,5 @@ async def scrape_dynamic_content(urls):
     df = pd.DataFrame(dynamic_data)
     return df
 
-def update_database_with_visited_urls(visited_urls, table_name, database_config):
-    dbname, user, password, host, port = database_config
-    conn = psycopg2.connect(
-        dbname=dbname,
-        user=user,
-        password=password,
-        host=host,
-        port=port,
-    )
 
-    cursor = conn.cursor()
 
-    for url in visited_urls:
-        query = f"""
-            INSERT INTO {table_name} (url)
-            VALUES (%s)
-            ON CONFLICT (url) DO NOTHING;
-        """
-        cursor.execute(query, (url,))
-        conn.commit()
-
-    cursor.close()
-    conn.close()
-
-def update_database_with_dynamic_content(df, table_name, database_config):
-    dbname, user, password, host, port = database_config
-    conn = psycopg2.connect(
-        dbname=dbname,
-        user=user,
-        password=password,
-        host=host,
-        port=port,
-    )
-
-    cursor = conn.cursor()
-
-    for _, row in df.iterrows():
-        # Concatenate dynamic content from scroll and click/expand/modals
-        combined_dynamic_content = row['dynamic_content_scroll'] + " " + row['dynamic_content_click']
-        combined_tables = row['tables_scroll'] + row['tables_click']
-        combined_code_snippets = row['code_snippets_scroll'] + row['code_snippets_click']
-
-        query = f"""
-            UPDATE {table_name}
-            SET dynamic_content = %s,
-                tables = %s::jsonb,
-                code_snippets = %s::jsonb
-            WHERE url = %s;
-        """
-        cursor.execute(query, (
-            combined_dynamic_content, json.dumps(combined_tables), json.dumps(combined_code_snippets), row['url']))
-        conn.commit()
-
-    cursor.close()
-    conn.close()

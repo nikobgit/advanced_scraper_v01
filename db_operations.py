@@ -1,11 +1,14 @@
-import psycopg2
 from psycopg2 import sql
-import pandas as pd
 import logging
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 import re
+import psycopg2
+import pandas as pd
+import json
+
 
 logging.basicConfig(level=logging.WARNING)
+
 
 def extract_root_domain(url):
     from urllib.parse import urlparse
@@ -21,6 +24,7 @@ def extract_root_domain(url):
 
 def sanitize_string(string):
     return re.sub(r'\W|^(?=\d)', '_', string)
+
 
 def get_scraped_urls_from_database(table_name, dbname, user, password, host, port):
     table_name = sanitize_string(table_name)
@@ -46,6 +50,7 @@ def get_scraped_urls_from_database(table_name, dbname, user, password, host, por
     conn.close()
     return urls
 
+
 def create_database_if_not_exists(database, user, password, host, port):
     conn = psycopg2.connect(
         dbname="postgres",
@@ -62,6 +67,7 @@ def create_database_if_not_exists(database, user, password, host, port):
         cursor.execute(f"CREATE DATABASE {database};")
     cursor.close()
     conn.close()
+
 
 def create_table_if_not_exists(conn, table_name, df):
     table_name = sanitize_string(table_name)
@@ -86,6 +92,7 @@ def create_table_if_not_exists(conn, table_name, df):
         cursor.execute(create_table_sql)
         conn.commit()
     cursor.close()
+
 
 def save_to_postgres(df, table_name, database, user, password, host, port, query=None, recreate_table=False):
     table_name = sanitize_string(table_name)
@@ -145,3 +152,61 @@ def drop_table_if_exists(conn, table_name):
         conn.commit()
 
     cursor.close()
+
+
+def update_database_with_dynamic_content(df, table_name, database_config):
+    dbname, user, password, host, port = database_config
+    conn = psycopg2.connect(
+        dbname=dbname,
+        user=user,
+        password=password,
+        host=host,
+        port=port,
+    )
+
+    cursor = conn.cursor()
+
+    for _, row in df.iterrows():
+        # Concatenate dynamic content from scroll and click/expand/modals
+        combined_dynamic_content = row['dynamic_content_scroll'] + " " + row['dynamic_content_click']
+        combined_tables = row['tables_scroll'] + row['tables_click']
+        combined_code_snippets = row['code_snippets_scroll'] + row['code_snippets_click']
+
+        query = f"""
+            UPDATE {table_name}
+            SET dynamic_content = %s,
+                tables = %s::jsonb,
+                code_snippets = %s::jsonb
+            WHERE url = %s;
+        """
+        cursor.execute(query, (
+            combined_dynamic_content, json.dumps(combined_tables), json.dumps(combined_code_snippets), row['url']))
+        conn.commit()
+
+    cursor.close()
+    conn.close()
+
+
+def update_database_with_visited_urls(visited_urls, table_name, database_config):
+    dbname, user, password, host, port = database_config
+    conn = psycopg2.connect(
+        dbname=dbname,
+        user=user,
+        password=password,
+        host=host,
+        port=port,
+    )
+
+    cursor = conn.cursor()
+
+    for url in visited_urls:
+        query = f"""
+            INSERT INTO {table_name} (url)
+            VALUES (%s)
+            ON CONFLICT (url) DO NOTHING;
+        """
+        cursor.execute(query, (url,))
+        conn.commit()
+
+    cursor.close()
+    conn.close()
