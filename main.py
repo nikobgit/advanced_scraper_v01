@@ -41,7 +41,7 @@ table_name = sanitize_string(extract_root_domain(websites[0]))
 min_delay = 1
 max_delay = 3
 crawl_level = 7
-max_urls_to_scrape = 50
+max_urls_to_scrape = 5
 
 previously_scraped_urls = get_scraped_urls_from_database(table_name, database_name, database_user, database_password, database_host, database_port)
 
