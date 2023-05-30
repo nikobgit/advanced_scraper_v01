@@ -13,10 +13,8 @@ from utilities import random_user_agent, ignored_extensions
 from db_operations import get_scraped_urls_from_database, extract_root_domain, sanitize_string
 import db_operations
 
-
 def main():
     pass
-
 
 main()
 
@@ -24,8 +22,14 @@ logging.getLogger('charset_normalizer').setLevel(logging.WARNING)
 
 # User-defined variables
 websites = [
-    'https://openai.com',
+    'https://platform.openai.com/examples', 'https://openai.com/research/overview', 'https://platform.openai.com/docs/introduction', 'https://platform.openai.com/docs/guides/fine-tuning', 'https://openai.com/blog/introducing-chatgpt-and-whisper-apis'
 ]
+
+scrape_by_domain = False
+
+if not scrape_by_domain:
+    max_urls_to_scrape = len(websites)
+
 database_name = "db_scrape"
 database_user = "lesid_01"
 database_password = "@Ketamine1324!"
@@ -41,7 +45,7 @@ table_name = sanitize_string(extract_root_domain(websites[0]))
 min_delay = 1
 max_delay = 3
 crawl_level = 7
-max_urls_to_scrape = 5
+max_urls_to_scrape = 10
 
 previously_scraped_urls = get_scraped_urls_from_database(table_name, database_name, database_user, database_password, database_host, database_port)
 
@@ -61,7 +65,6 @@ def enumerate_subdomains(domain):
         pass
     return subdomains
 
-
 def is_valid_url(url):
     try:
         # Ignore non-HTML files
@@ -74,15 +77,16 @@ def is_valid_url(url):
     except Exception as e:
         return False
 
+if scrape_by_domain:
+    # Existing code for handling subdomains
+    subdomains = []
 
-subdomains = []
+    for website in websites:
+        domain = urlparse(website).netloc
+        subdomains.extend(enumerate_subdomains(domain))
 
-for website in websites:
-    domain = urlparse(website).netloc
-    subdomains.extend(enumerate_subdomains(domain))
-
-valid_subdomains = [f"https://{subdomain}" for subdomain in subdomains if is_valid_url(f"https://{subdomain}")]
-websites.extend(valid_subdomains)
+    valid_subdomains = [f"https://{subdomain}" for subdomain in subdomains if is_valid_url(f"https://{subdomain}")]
+    websites.extend(valid_subdomains)
 
 # CrawlerProcess setup
 process = CrawlerProcess({
@@ -98,13 +102,12 @@ process = CrawlerProcess({
 })
 
 crawler = process.create_crawler(MySpider)
-process.crawl(crawler, websites=websites, database_config=(database_name, database_user, database_password, database_host, database_port), ignore_patterns=ignore_patterns, previously_scraped_urls=previously_scraped_urls, max_urls_to_scrape=max_urls_to_scrape, table_name=table_name)
+process.crawl(crawler, websites=websites, database_config=(database_name, database_user, database_password, database_host, database_port), ignore_patterns=ignore_patterns, previously_scraped_urls=previously_scraped_urls, max_urls_to_scrape=max_urls_to_scrape, table_name=table_name, scrape_by_domain=scrape_by_domain)
 process.start()
 
 visited_urls = crawler.spider.get_visited_urls()
 
 import dynamic_scraper
-
 
 async def main_async():
     successful_urls = get_scraped_urls_from_database(table_name, database_name, database_user, database_password, database_host, database_port)

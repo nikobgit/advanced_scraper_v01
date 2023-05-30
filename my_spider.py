@@ -20,7 +20,7 @@ class MySpider(scrapy.Spider):
     def should_ignore_url(self, url):
         return any(pattern in url for pattern in self.ignore_patterns)
 
-    def __init__(self, websites, database_config, ignore_patterns, max_urls_to_scrape, previously_scraped_urls, table_name, *args, **kwargs):
+    def __init__(self, websites, database_config, ignore_patterns, max_urls_to_scrape, previously_scraped_urls, table_name, scrape_by_domain, *args, **kwargs):
         super(MySpider, self).__init__(*args, **kwargs)
         self.start_urls = websites
         self.scraped_data = {}
@@ -31,6 +31,7 @@ class MySpider(scrapy.Spider):
         self.scraped_items_count = 0
         self.max_urls_to_scrape = max_urls_to_scrape
         self.table_name = table_name
+        self.scrape_by_domain = scrape_by_domain
 
 
     def parse(self, response):
@@ -48,8 +49,10 @@ class MySpider(scrapy.Spider):
                 self.visited_urls.add(response.url)  # Add the URL to the visited_urls set after scraping
 
         for link in links:
-            if link not in self.visited_urls and is_same_domain(link, response.url):
-                yield scrapy.Request(link, callback=self.parse, headers={'User-Agent': random_user_agent()})
+            if (self.scrape_by_domain and is_same_domain(link, response.url)) or (
+                    not self.scrape_by_domain and link in self.start_urls):
+                if link not in self.visited_urls:
+                    yield scrapy.Request(link, callback=self.parse, headers={'User-Agent': random_user_agent()})
 
         df = self.get_dataframe()
     def get_visited_urls(self):
