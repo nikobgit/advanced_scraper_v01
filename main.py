@@ -109,9 +109,18 @@ visited_urls = crawler.spider.get_visited_urls()
 
 import dynamic_scraper
 
+
 async def main_async():
-    successful_urls = get_scraped_urls_from_database(table_name, database_name, database_user, database_password, database_host, database_port)
+    successful_urls = get_scraped_urls_from_database(table_name, database_name, database_user, database_password,
+                                                     database_host, database_port)
     dynamic_df = await dynamic_scraper.scrape_dynamic_content(successful_urls)
-    db_operations.update_database_with_dynamic_content(dynamic_df, table_name, (database_name, database_user, database_password, database_host, database_port))
+
+    for _, row in dynamic_df.iterrows():
+        dynamic_urls = row['dynamic_urls']
+        db_operations.update_database_with_visited_urls(dynamic_urls, table_name, (
+        database_name, database_user, database_password, database_host, database_port))
+
+    db_operations.update_database_with_dynamic_content(dynamic_df, table_name, (
+    database_name, database_user, database_password, database_host, database_port))
 
 asyncio.run(main_async())

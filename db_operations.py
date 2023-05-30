@@ -201,11 +201,12 @@ def update_database_with_visited_urls(visited_urls, table_name, database_config)
 
     for url in visited_urls:
         query = f"""
-            INSERT INTO {table_name} (url)
-            VALUES (%s)
-            ON CONFLICT (url) DO NOTHING;
+            INSERT INTO {table_name} (url, visited_urls)  # Update this line
+            VALUES (%s, %s)  # Update this line
+            ON CONFLICT (url) DO UPDATE SET
+                visited_urls = EXCLUDED.visited_urls;  # Update this line
         """
-        cursor.execute(query, (url,))
+        cursor.execute(query, (url, url))  # Update this line
         conn.commit()
 
     cursor.close()

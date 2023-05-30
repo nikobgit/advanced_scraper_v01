@@ -86,10 +86,30 @@ async def extract_data(page):
 
     return dynamic_content, tables, code_snippets
 
+
+dynamic_urls = set()
+
+
 async def scroll_and_extract(page):
+    global dynamic_urls
     logging.info("Scrolling to bottom of page to load dynamic content...")
-    await page.mouse.wheel(0, page.viewport_size['height'])
-    await page.wait_for_load_state("networkidle")
+
+    prev_scroll_position = -1
+    curr_scroll_position = 0
+    previous_url = page.url
+
+    while prev_scroll_position != curr_scroll_position:
+        prev_scroll_position = curr_scroll_position
+        await page.mouse.wheel(0, page.viewport_size['height'])
+        await page.wait_for_load_state("networkidle")
+
+        curr_scroll_position = await page.evaluate("document.documentElement.scrollTop || document.body.scrollTop")
+        new_url = page.url
+
+        if new_url != previous_url and new_url not in dynamic_urls:
+            dynamic_urls.add(new_url)
+            print(f"New URL found while scrolling: {new_url}")
+            previous_url = new_url
 
     logging.info("Extracting dynamic content, tables, and code snippets...")
     return await extract_data(page)
@@ -109,6 +129,8 @@ async def extract_dynamic_content(url):
             page = await context.new_page()
             await page.route("**/*", intercept_route)
 
+            dynamic_urls = set()
+
             try:
                 logging.info(f"Loading {url}...")
                 await page.goto(url, wait_until="domcontentloaded", timeout=10000)
@@ -116,8 +138,6 @@ async def extract_dynamic_content(url):
 
                 dynamic_content, tables, code_snippets = await scroll_and_extract(page)
                 dynamic_content_click, code_snippets_click = await dynamic_content_click_modal(page, url)
-
-                # Extend code snippets with the snippets obtained from modal
                 code_snippets.extend(code_snippets_click)
 
             except Exception as e:
@@ -129,11 +149,12 @@ async def extract_dynamic_content(url):
             await context.close()
             await browser.close()
 
-            return dynamic_content, tables, code_snippets, dynamic_content_click, code_snippets_click
+            return dynamic_content, tables, code_snippets, dynamic_content_click, code_snippets_click, dynamic_urls
 
     except Exception as e:
         logging.error(f"Exception while extracting data for {url}: {e}")
         return "", [], [], "", []
+
 
 async def scrape_dynamic_content(urls):
     dynamic_data = []
@@ -143,13 +164,15 @@ async def scrape_dynamic_content(urls):
             continue
 
         try:
-            dynamic_content, tables, code_snippets, dynamic_content_click, code_snippets_click = await extract_dynamic_content(url)
+            dynamic_content, tables, code_snippets, dynamic_content_click, code_snippets_click, dynamic_urls = await extract_dynamic_content(url)
+            dynamic_urls = dynamic_urls - {url}  # Remove the original URL from the dynamic URLs set
             dynamic_data.append({
                 'url': url,
                 'dynamic_content': dynamic_content,
                 'dynamic_click': dynamic_content_click,
                 'tables': tables,
                 'code_snippets': code_snippets,
+                'dynamic_urls': list(dynamic_urls),  # Add this line
             })
         except Exception as e:
             logging.error(f"Exception while extracting data for {url}: {e}")
@@ -157,3 +180,4 @@ async def scrape_dynamic_content(urls):
 
     df = pd.DataFrame(dynamic_data)
     return df
+
